@@ -20,6 +20,16 @@
     color:#fff; border:0; border-radius:14px; padding:28px 20px; font-size:26px; font-weight:600; cursor:pointer;
     min-height:110px; text-align:center; }
   button.groen { background:var(--groen); }
+  button.paars { background:#7a5af5; grid-column:1 / -1; min-height:80px; font-size:24px; }
+  .balk { display:flex; align-items:center; gap:12px; justify-content:space-between; margin-bottom:12px; }
+  #bladerPad { flex:1; font-size:20px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .raster { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:12px; }
+  .raster button { min-height:0; padding:10px; font-size:17px; font-weight:500; flex-direction:column; }
+  button.map { background:#2c323b; min-height:90px; }
+  button.mini { background:#2c323b; gap:6px; }
+  button.mini img { width:100%; aspect-ratio:4/3; object-fit:cover; border-radius:8px; background:#000; }
+  button.mini span { font-size:13px; color:var(--zacht); word-break:break-all; }
+  #bladerInhoud a { color:var(--accent); }
   button.tweede { background:#3a414c; font-size:20px; min-height:64px; padding:14px 20px; font-weight:500; }
   button:disabled { opacity:.35; cursor:default; }
   input[type=file] { display:none; }
@@ -49,6 +59,7 @@
     <div class="grote-knoppen">
       <label class="knop" for="bestand">📷 Kies foto</label>
       <button id="vr" class="groen" disabled>🥽 Bekijk in 3D</button>
+      <button id="serverKnop" class="paars">📁 Foto's van server</button>
     </div>
     <input id="bestand" type="file" accept="image/*,.heic,.heif">
     <div id="status">Even geduld, het programma wordt geladen…</div>
@@ -56,8 +67,21 @@
     <div style="margin-top:14px"><button id="opslaan" class="tweede" disabled>💾 Bewaar 3D-foto</button></div>
   </div>
 
+  <div class="paneel" id="bladeren" style="display:none">
+    <div class="balk">
+      <button id="omhoog" class="tweede">⬆ Omhoog</button>
+      <span id="bladerPad"></span>
+      <button id="sluitBladeren" class="tweede">✕ Sluiten</button>
+    </div>
+    <div id="bladerInhoud"></div>
+  </div>
+
   <details>
     <summary>⚙ Instellingen en voorbeeld</summary>
+    <div class="schuif" style="margin-top:14px">
+      <span>Adres van de fotoserver (leeg laten als er geen server is):</span>
+      <input id="serverAdres" type="url" placeholder="https://192.168.11.2:8443" style="font-size:18px;padding:8px;border-radius:8px;border:1px solid #3a414c;background:#14161a;color:#e8eaed">
+    </div>
     <div class="rij">
       <div class="schuif">
         <span>3D-sterkte: <b id="sterkteW">3,0</b>%</span>
@@ -262,9 +286,8 @@ function bouwStereo() {
   if (vrSessie) zetVRBeeld();
 }
 
-/* ---------- foto gekozen ---------- */
-$('bestand').addEventListener('change', async e => {
-  const bestand = e.target.files[0];
+/* ---------- foto verwerken (van apparaat of van server) ---------- */
+async function verwerk(bestand) {
   if (!bestand) return;
   if (!schatter) {
     status('Foto gekozen; wachten tot het model geladen is…');
@@ -283,13 +306,100 @@ $('bestand').addEventListener('change', async e => {
     await new Promise(r => setTimeout(r, 20));
     bouwStereo();
     balk(0);
-    status(`✅ Klaar in ${((performance.now()-t0)/1000).toFixed(1)} s. Druk op de groene knop 🥽 Bekijk in 3D.`);
-    $('vr').disabled = !navigator.xr; $('opslaan').disabled = false;
-    if (!navigator.xr) status($('status').textContent + ' (VR niet beschikbaar in deze browser)');
+    $('opslaan').disabled = false;
+    if (vrMogelijk) {
+      $('vr').disabled = false;
+      status(`✅ Klaar in ${((performance.now()-t0)/1000).toFixed(1)} s. Druk op de groene knop 🥽 Bekijk in 3D.`);
+    } else {
+      status(`✅ Klaar in ${((performance.now()-t0)/1000).toFixed(1)} s. 3D bekijken kan alleen in de VR-bril; hier kun je de 3D-foto wel bewaren.`);
+    }
   } catch (err) {
     console.error(err); balk(0); status('Er ging iets mis: ' + err.message);
   }
+}
+$('bestand').addEventListener('change', e => verwerk(e.target.files[0]));
+
+/* ---------- is VR mogelijk op dit apparaat? ---------- */
+let vrMogelijk = false;
+(async () => {
+  try { vrMogelijk = !!navigator.xr && await navigator.xr.isSessionSupported('immersive-vr'); } catch { vrMogelijk = false; }
+  if (!vrMogelijk) $('vr').title = '3D bekijken kan alleen in de VR-bril (of met Quest Link)';
+})();
+
+/* ---------- foto's van de (eigen) fotoserver ---------- */
+const STANDAARD_SERVER = 'https://192.168.11.2:8443';
+function serverAdres() {
+  let a = '';
+  try { a = localStorage.getItem('fotoserver'); } catch {}
+  if (a === null || a === undefined) a = STANDAARD_SERVER;
+  return a.trim().replace(/\/+$/, '');
+}
+function toonServerKnop() {
+  $('serverKnop').style.display = serverAdres() ? '' : 'none';
+}
+$('serverAdres').value = serverAdres();
+$('serverAdres').addEventListener('change', () => {
+  try { localStorage.setItem('fotoserver', $('serverAdres').value.trim()); } catch {}
+  toonServerKnop();
 });
+toonServerKnop();
+
+let huidigeMap = '';
+async function serverVraag(pad, params) {
+  const url = serverAdres() + pad + '?' + new URLSearchParams(params);
+  const r = await fetch(url, { mode: 'cors' });
+  if (!r.ok) throw new Error(`server antwoordt ${r.status}`);
+  return r;
+}
+function serverFout(err) {
+  console.error(err);
+  const a = serverAdres();
+  $('bladerInhoud').innerHTML = `<p>De fotoserver is niet bereikbaar (${err.message}).</p>
+    <p>Eerste keer op dit apparaat? Open dan eerst <a href="${a}/" target="_blank">${a}</a>,
+    kies bij de waarschuwing <b>Geavanceerd → Toch doorgaan</b>, en probeer het daarna opnieuw.</p>
+    <p>Het adres pas je aan onder ⚙ Instellingen.</p>`;
+}
+async function openMap(pad) {
+  huidigeMap = pad;
+  $('bladeren').style.display = '';
+  $('bladerPad').textContent = '📁 ' + (pad || 'Foto\'s');
+  $('omhoog').style.display = pad ? '' : 'none';
+  $('bladerInhoud').innerHTML = '<p>Laden…</p>';
+  try {
+    const lijst = await (await serverVraag('/api/lijst', { pad })).json();
+    const doos = document.createElement('div'); doos.className = 'raster';
+    for (const m of lijst.mappen) {
+      const k = document.createElement('button'); k.className = 'map';
+      k.textContent = '📁 ' + m;
+      k.onclick = () => openMap(pad ? pad + '/' + m : m);
+      doos.appendChild(k);
+    }
+    for (const f of lijst.fotos) {
+      const p = pad ? pad + '/' + f : f;
+      const k = document.createElement('button'); k.className = 'mini';
+      const img = document.createElement('img'); img.loading = 'lazy'; img.alt = f;
+      img.src = serverAdres() + '/api/mini?' + new URLSearchParams({ pad: p });
+      const t = document.createElement('span'); t.textContent = f;
+      k.append(img, t);
+      k.onclick = () => kiesServerFoto(p, f);
+      doos.appendChild(k);
+    }
+    $('bladerInhoud').innerHTML = '';
+    if (!lijst.mappen.length && !lijst.fotos.length) $('bladerInhoud').innerHTML = '<p>Deze map is leeg.</p>';
+    else $('bladerInhoud').appendChild(doos);
+  } catch (err) { serverFout(err); }
+}
+async function kiesServerFoto(pad, bestandsnaam) {
+  $('bladeren').style.display = 'none';
+  status('Foto ophalen van de server…'); balk(0.05);
+  try {
+    const blob = await (await serverVraag('/api/foto', { pad })).blob();
+    await verwerk(new File([blob], bestandsnaam, { type: blob.type }));
+  } catch (err) { balk(0); status('Foto ophalen mislukt: ' + err.message); }
+}
+$('serverKnop').addEventListener('click', () => openMap(huidigeMap));
+$('omhoog').addEventListener('click', () => openMap(huidigeMap.split('/').slice(0, -1).join('/')));
+$('sluitBladeren').addEventListener('click', () => { $('bladeren').style.display = 'none'; });
 
 let wachtrij = null;
 for (const id of ['sterkte', 'vlak']) {
@@ -339,29 +449,34 @@ function initVR() {
   camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
   renderer.setAnimationLoop(() => renderer.render(scene, camera));
 }
-function maakVlak(canvas, laag) {
+function maakVlak(canvas, laag, ooghoogte = 1.6) {
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
   const breedte = 2.6, hoogte = breedte * canvas.height / canvas.width;
   const m = new THREE.Mesh(new THREE.PlaneGeometry(breedte, hoogte), new THREE.MeshBasicMaterial({ map: tex }));
-  m.position.set(0, 1.6, -2.2);
+  m.position.set(0, ooghoogte, -2.2);
   m.layers.set(laag);               // laag 1 = linkeroog, laag 2 = rechteroog
   return m;
 }
-function zetVRBeeld() {
+let vrHoogte = 1.6;
+function zetVRBeeld(hoogte) {
+  if (hoogte !== undefined) vrHoogte = hoogte;
   for (const m of [vlakL, vlakR]) if (m) { scene.remove(m); m.material.map.dispose(); m.geometry.dispose(); }
-  vlakL = maakVlak(links, 1); vlakR = maakVlak(rechts, 2);
+  vlakL = maakVlak(links, 1, vrHoogte); vlakR = maakVlak(rechts, 2, vrHoogte);
   scene.add(vlakL, vlakR);
 }
 $('vr').addEventListener('click', async () => {
+  if (!vrMogelijk) { status('3D bekijken kan alleen in de VR-bril (of op de pc met Quest Link).'); return; }
   if (!renderer) initVR();
   try {
     const sessie = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
-    renderer.xr.setReferenceSpaceType('local-floor');
+    let hoogte = 1.6;
+    try { await sessie.requestReferenceSpace('local-floor'); renderer.xr.setReferenceSpaceType('local-floor'); }
+    catch { renderer.xr.setReferenceSpaceType('local'); hoogte = 0; }
     await renderer.xr.setSession(sessie);
     vrSessie = sessie;
-    zetVRBeeld();
+    zetVRBeeld(hoogte);
     sessie.addEventListener('end', () => { vrSessie = null; });
     // met de trekker/selectknop VR verlaten
     sessie.addEventListener('select', () => sessie.end());
