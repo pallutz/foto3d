@@ -4,65 +4,76 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Foto naar 3D</title>
+<meta name="theme-color" content="#14161a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
 <style>
-  :root { --bg:#14161a; --panel:#1f232a; --tekst:#e8eaed; --zacht:#9aa0a6; --accent:#4f9cff; }
+  :root { --bg:#14161a; --panel:#1f232a; --tekst:#e8eaed; --zacht:#9aa0a6; --accent:#4f9cff; --groen:#2fa36b; }
   * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--tekst); font:18px/1.5 system-ui, sans-serif; }
-  main { max-width:1100px; margin:0 auto; padding:24px 16px 60px; }
-  h1 { font-size:28px; margin:0 0 4px; }
-  p.sub { color:var(--zacht); margin:0 0 20px; }
-  .paneel { background:var(--panel); border-radius:14px; padding:18px; margin-bottom:16px; }
-  button, label.knop { display:inline-block; background:var(--accent); color:#fff; border:0; border-radius:10px;
-    padding:14px 22px; font-size:18px; cursor:pointer; margin:4px 8px 4px 0; }
-  button:disabled { opacity:.4; cursor:default; }
-  button.tweede { background:#3a414c; }
+  body { margin:0; background:var(--bg); color:var(--tekst); font:20px/1.5 system-ui, sans-serif; }
+  main { max-width:1000px; margin:0 auto; padding:28px 16px 60px; }
+  h1 { font-size:34px; margin:0 0 4px; }
+  p.sub { color:var(--zacht); margin:0 0 22px; font-size:18px; }
+  .paneel { background:var(--panel); border-radius:16px; padding:20px; margin-bottom:16px; }
+  .grote-knoppen { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  button, label.knop { display:flex; align-items:center; justify-content:center; gap:12px; background:var(--accent);
+    color:#fff; border:0; border-radius:14px; padding:28px 20px; font-size:26px; font-weight:600; cursor:pointer;
+    min-height:110px; text-align:center; }
+  button.groen { background:var(--groen); }
+  button.tweede { background:#3a414c; font-size:20px; min-height:64px; padding:14px 20px; font-weight:500; }
+  button:disabled { opacity:.35; cursor:default; }
   input[type=file] { display:none; }
-  .rij { display:flex; flex-wrap:wrap; gap:18px; align-items:center; }
-  .schuif { display:flex; flex-direction:column; min-width:240px; }
-  .schuif span { color:var(--zacht); font-size:15px; }
-  #status { color:var(--zacht); min-height:1.5em; }
-  #voortgang { width:100%; height:8px; background:#2c323b; border-radius:4px; overflow:hidden; margin-top:8px; }
+  #status { color:var(--tekst); min-height:1.5em; margin-top:16px; font-size:20px; }
+  #voortgang { width:100%; height:10px; background:#2c323b; border-radius:5px; overflow:hidden; margin-top:10px; }
   #voortgang div { height:100%; width:0; background:var(--accent); transition:width .2s; }
-  .beelden { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  details { background:var(--panel); border-radius:16px; padding:16px 20px; margin-bottom:16px; }
+  summary { cursor:pointer; font-size:20px; color:var(--zacht); }
+  .rij { display:flex; flex-wrap:wrap; gap:24px; align-items:center; margin-top:14px; }
+  .schuif { display:flex; flex-direction:column; min-width:260px; flex:1; }
+  .schuif span { color:var(--zacht); font-size:17px; }
+  .schuif input { width:100%; height:32px; }
+  .beelden { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px; }
   .beelden canvas { width:100%; border-radius:8px; background:#000; }
   .beelden figure { margin:0; }
-  .beelden figcaption { color:var(--zacht); font-size:14px; }
+  .beelden figcaption { color:var(--zacht); font-size:15px; }
   #sbs { width:100%; border-radius:8px; margin-top:12px; background:#000; }
-  @media (max-width:700px){ .beelden { grid-template-columns:1fr; } }
+  @media (max-width:640px){ .grote-knoppen, .beelden { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <main>
   <h1>Foto naar 3D</h1>
-  <p class="sub">Kies een foto. De diepte wordt hier in het apparaat berekend; de foto gaat nergens naartoe.</p>
+  <p class="sub">1. Kies een foto &nbsp;·&nbsp; 2. Even wachten &nbsp;·&nbsp; 3. Bekijk in 3D. De foto blijft in dit apparaat.</p>
 
   <div class="paneel">
-    <label class="knop" for="bestand">📷 Kies foto</label>
+    <div class="grote-knoppen">
+      <label class="knop" for="bestand">📷 Kies foto</label>
+      <button id="vr" class="groen" disabled>🥽 Bekijk in 3D</button>
+    </div>
     <input id="bestand" type="file" accept="image/*,.heic,.heif">
-    <button id="vr" disabled>🥽 Bekijk in 3D (VR)</button>
-    <button id="opslaan" class="tweede" disabled>💾 Bewaar 3D-foto</button>
-    <div id="status">Model wordt geladen…</div>
+    <div id="status">Even geduld, het programma wordt geladen…</div>
     <div id="voortgang"><div></div></div>
+    <div style="margin-top:14px"><button id="opslaan" class="tweede" disabled>💾 Bewaar 3D-foto</button></div>
   </div>
 
-  <div class="paneel rij">
-    <div class="schuif">
-      <span>3D-sterkte: <b id="sterkteW">3,0</b>%</span>
-      <input id="sterkte" type="range" min="0.5" max="6" step="0.25" value="3">
+  <details>
+    <summary>⚙ Instellingen en voorbeeld</summary>
+    <div class="rij">
+      <div class="schuif">
+        <span>3D-sterkte: <b id="sterkteW">3,0</b>%</span>
+        <input id="sterkte" type="range" min="0.5" max="6" step="0.25" value="3">
+      </div>
+      <div class="schuif">
+        <span>Scherpstelvlak (wat "op de foto" ligt): <b id="vlakW">30</b>%</span>
+        <input id="vlak" type="range" min="0" max="100" step="5" value="30">
+      </div>
     </div>
-    <div class="schuif">
-      <span>Scherpstelvlak (wat "op de foto" ligt): <b id="vlakW">30</b>%</span>
-      <input id="vlak" type="range" min="0" max="100" step="5" value="30">
-    </div>
-  </div>
-
-  <div class="paneel">
     <div class="beelden">
       <figure><canvas id="cFoto"></canvas><figcaption>Origineel</figcaption></figure>
       <figure><canvas id="cDiepte"></canvas><figcaption>Dieptekaart (licht = dichtbij)</figcaption></figure>
     </div>
     <canvas id="sbs"></canvas>
-  </div>
+  </details>
 </main>
 
 <script type="module">
@@ -104,7 +115,7 @@ async function laadModel() {
     opties.device = 'wasm';
   }
   balk(0);
-  status(`Klaar (${opties.device === 'webgpu' ? 'grafische chip' : 'processor'}). Kies een foto.`);
+  status(`Klaar. Druk op 📷 Kies foto. (rekent met ${opties.device === 'webgpu' ? 'grafische chip' : 'processor'})`);
 }
 
 /* ---------- foto inlezen (met juiste draaiing) ---------- */
@@ -272,7 +283,7 @@ $('bestand').addEventListener('change', async e => {
     await new Promise(r => setTimeout(r, 20));
     bouwStereo();
     balk(0);
-    status(`Klaar in ${((performance.now()-t0)/1000).toFixed(1)} s. Druk op "Bekijk in 3D".`);
+    status(`✅ Klaar in ${((performance.now()-t0)/1000).toFixed(1)} s. Druk op de groene knop 🥽 Bekijk in 3D.`);
     $('vr').disabled = !navigator.xr; $('opslaan').disabled = false;
     if (!navigator.xr) status($('status').textContent + ' (VR niet beschikbaar in deze browser)');
   } catch (err) {
@@ -290,12 +301,31 @@ for (const id of ['sterkte', 'vlak']) {
 }
 
 /* ---------- opslaan als side-by-side (_LR.jpg) ---------- */
-$('opslaan').addEventListener('click', () => {
-  $('sbs').toBlob(b => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(b); a.download = `${naam}_LR.jpg`; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-  }, 'image/jpeg', 0.92);
+$('opslaan').addEventListener('click', async () => {
+  const bestandsnaam = `${naam}_LR.jpg`;
+  const blob = await new Promise(r => $('sbs').toBlob(r, 'image/jpeg', 0.92));
+  // Chrome/Edge op de pc: zelf map kiezen en bestaand bestand kunnen overschrijven
+  if (window.showSaveFilePicker) {
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: bestandsnaam,
+        startIn: 'pictures',
+        types: [{ description: '3D-foto (JPG)', accept: { 'image/jpeg': ['.jpg'] } }]
+      });
+      const w = await handle.createWritable();
+      await w.write(blob); await w.close();
+      status(`Opgeslagen als ${handle.name}`);
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;          // gebruiker klikte Annuleren
+      console.warn('Opslaan via kiezer mislukt, val terug op download', e);
+    }
+  }
+  // Quest en andere browsers: gewone download naar de map Downloads
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = bestandsnaam; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  status(`Opgeslagen in Downloads als ${bestandsnaam} (bestond hij al, dan voegt de browser "(1)" toe)`);
 });
 
 /* ---------- VR-weergave (WebXR): elk oog ziet zijn eigen beeld ---------- */
@@ -338,6 +368,9 @@ $('vr').addEventListener('click', async () => {
   } catch (err) { status('VR starten lukte niet: ' + err.message); }
 });
 
+if ('serviceWorker' in navigator && location.protocol === 'https:') {
+  navigator.serviceWorker.register('sw.js').catch(e => console.warn('service worker niet geregistreerd', e));
+}
 modelKlaar = laadModel();
 modelKlaar.catch(err => { console.error(err); balk(0); status('Model laden mislukt: ' + err.message + ' — staat de pagina via http://localhost open en is er internet?'); });
 </script>
