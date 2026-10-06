@@ -47,13 +47,17 @@
   .beelden figure { margin:0; }
   .beelden figcaption { color:var(--zacht); font-size:15px; }
   #sbs { width:100%; border-radius:8px; margin-top:12px; background:#000; }
+  button.video { background:#2c323b; min-height:90px; }
+  #vluchtVideo { width:100%; border-radius:8px; background:#000; display:block; }
+  #hud { width:100%; border-radius:8px; margin-top:10px; background:#0b0d10; display:block; }
+  #cockpitTip { color:var(--zacht); font-size:16px; margin:10px 0 0; }
   @media (max-width:640px){ .grote-knoppen, .beelden { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <main>
   <h1>Foto naar 3D</h1>
-<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · opslaan op server</div>
+<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit</div>
   <p class="sub">1. Kies een foto &nbsp;·&nbsp; 2. Even wachten &nbsp;·&nbsp; 3. Bekijk in 3D. De foto blijft in dit apparaat.</p>
 
   <div class="paneel">
@@ -75,6 +79,20 @@
       <button id="sluitBladeren" class="tweede">✕ Sluiten</button>
     </div>
     <div id="bladerInhoud"></div>
+  </div>
+
+  <div class="paneel" id="cockpit" style="display:none">
+    <div class="balk">
+      <span id="vluchtNaam"></span>
+      <button id="sluitCockpit" class="tweede">✕ Sluiten</button>
+    </div>
+    <video id="vluchtVideo" playsinline controls preload="metadata" crossorigin="anonymous"></video>
+    <canvas id="hud" width="1024" height="256"></canvas>
+    <div class="grote-knoppen" style="margin-top:12px">
+      <button id="instappen" class="groen">🚁 Instappen</button>
+      <button id="speelPauze" class="tweede">⏯ Afspelen / pauze</button>
+    </div>
+    <p id="cockpitTip">In de bril: trekker = afspelen/pauze · duimstick links/rechts = 10 s terug/vooruit · knijpknop = uitstappen</p>
   </div>
 
   <details>
@@ -410,8 +428,16 @@ async function openMap(pad) {
       k.onclick = () => kiesServerFoto(p, f, { is3D, verbeterd: verbeterd[f] });
       doos.appendChild(k);
     }
+    const videos = lijst.videos || [];
+    for (const v of videos) {
+      const p = pad ? pad + '/' + v : v;
+      const k = document.createElement('button'); k.className = 'video';
+      k.textContent = '🎬 ' + v.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
+      k.onclick = () => openVlucht(p);
+      doos.appendChild(k);
+    }
     $('bladerInhoud').innerHTML = '';
-    if (!lijst.mappen.length && !lijst.fotos.length) $('bladerInhoud').innerHTML = '<p>Deze map is leeg.</p>';
+    if (!lijst.mappen.length && !lijst.fotos.length && !videos.length) $('bladerInhoud').innerHTML = '<p>Deze map is leeg.</p>';
     else $('bladerInhoud').appendChild(doos);
   } catch (err) { serverFout(err); }
 }
@@ -566,6 +592,173 @@ $('vr').addEventListener('click', async () => {
     // met de trekker/selectknop VR verlaten
     sessie.addEventListener('select', () => sessie.end());
   } catch (err) { status('VR starten lukte niet: ' + err.message); }
+});
+
+/* ---------- drone-cockpit: video groot om je heen + dashboard uit het .SRT ---------- */
+let vlucht = null;   // { pt: [{t,x,y,h,v,vz,r}], minX, maxX, minY, maxY }
+let cRenderer = null, cScene, cCamera, cScherm, cHud, cHudTex;   // VR-cockpit
+async function openVlucht(pad) {
+  $('bladeren').style.display = 'none';
+  $('cockpit').style.display = '';
+  $('vluchtNaam').textContent = '🎬 ' + pad.split('/').pop();
+  const v = $('vluchtVideo');
+  v.src = serverAdres() + '/api/video?' + new URLSearchParams({ pad });
+  vlucht = null;
+  $('hud').style.display = 'none';
+  $('cockpit').scrollIntoView({ behavior: 'smooth' });
+  try {
+    const r = await serverVraag('/api/vlucht', { pad });
+    vlucht = bereidVluchtVoor((await r.json()).punten);
+  } catch { vlucht = null; }                         // gewone video zonder .SRT: geen dashboard
+  $('hud').style.display = vlucht ? '' : 'none';
+  tekenHUD();
+}
+function bereidVluchtVoor(punten) {
+  if (!punten || punten.length < 2) return null;
+  const n = punten.length, cosLat = Math.cos(punten[0][1] * Math.PI / 180);
+  const metHoogte = punten.some(p => p[3] != null);          // sommige .SRT's hebben geen hoogte
+  const pt = punten.map(([t, la, lo, h]) => ({ t, h: h || 0, x: lo * 111320 * cosLat, y: la * 110540 }));  // meters
+  let richting = 0;
+  for (let i = 0; i < n; i++) {
+    const a = pt[Math.max(0, i - 2)], b = pt[Math.min(n - 1, i + 2)];   // ±1 s gladstrijken
+    const dt = b.t - a.t, dx = b.x - a.x, dy = b.y - a.y;
+    pt[i].v = dt > 0 ? Math.hypot(dx, dy) / dt * 3.6 : 0;
+    pt[i].vz = dt > 0 ? (b.h - a.h) / dt : 0;
+    if (pt[i].v > 1.5) richting = (Math.atan2(dx, dy) * 180 / Math.PI + 360) % 360;  // stilhangen: richting houden
+    pt[i].r = richting;
+  }
+  const xs = pt.map(p => p.x), ys = pt.map(p => p.y);
+  return { pt, metHoogte, minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys) };
+}
+function vluchtOp(t) {
+  const pt = vlucht.pt;
+  let lo = 0, hi = pt.length - 1;
+  if (t <= pt[0].t) return pt[0];
+  if (t >= pt[hi].t) return pt[hi];
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (pt[m].t <= t) lo = m; else hi = m; }
+  const a = pt[lo], b = pt[hi], f = (t - a.t) / (b.t - a.t), mix = k => a[k] + (b[k] - a[k]) * f;
+  const dr = ((b.r - a.r + 540) % 360) - 180;
+  return { x: mix('x'), y: mix('y'), h: mix('h'), v: mix('v'), vz: mix('vz'), r: (a.r + dr * f + 360) % 360 };
+}
+const tijd = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function tekenHUD() {
+  const c = $('hud'), g = c.getContext('2d');
+  g.fillStyle = '#0b0d10'; g.fillRect(0, 0, c.width, c.height);
+  if (!vlucht) return;
+  const v = $('vluchtVideo'), t = v.currentTime || 0, s = vluchtOp(t);
+  const vak = (x, label, waarde, eenheid) => {
+    g.textAlign = 'left';
+    g.fillStyle = '#9aa0a6'; g.font = '24px system-ui'; g.fillText(label, x, 46);
+    g.fillStyle = '#e8eaed'; g.font = 'bold 66px system-ui'; g.fillText(waarde, x, 122);
+    g.fillStyle = '#9aa0a6'; g.font = '24px system-ui'; g.fillText(eenheid, x, 156);
+  };
+  vak(28, 'HOOGTE', vlucht.metHoogte ? s.h.toFixed(0) : '–', 'meter');
+  vak(205, 'SNELHEID', s.v.toFixed(0), 'km/u');
+  vak(382, 'STIJGEN', vlucht.metHoogte ? (s.vz >= 0 ? '+' : '') + s.vz.toFixed(1) : '–', 'm/s');
+  // tijdbalk
+  const duur = v.duration || vlucht.pt[vlucht.pt.length - 1].t;
+  g.fillStyle = '#2c323b'; g.fillRect(28, 200, 520, 10);
+  g.fillStyle = '#4f9cff'; g.fillRect(28, 200, 520 * Math.min(1, t / duur), 10);
+  g.fillStyle = '#9aa0a6'; g.font = '24px system-ui'; g.fillText(`${tijd(t)} / ${tijd(duur)}`, 28, 242);
+  // kompas: vliegrichting staat altijd boven
+  const cx = 660, cy = 112, R = 84;
+  g.strokeStyle = '#3a414c'; g.lineWidth = 4; g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
+  g.font = 'bold 28px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  for (const [b, l] of [[0, 'N'], [90, 'O'], [180, 'Z'], [270, 'W']]) {
+    const a = (b - s.r) * Math.PI / 180;
+    g.fillStyle = l === 'N' ? '#ff6b6b' : '#e8eaed';
+    g.fillText(l, cx + (R - 24) * Math.sin(a), cy - (R - 24) * Math.cos(a));
+  }
+  g.fillStyle = '#4f9cff';
+  g.beginPath(); g.moveTo(cx, cy - 30); g.lineTo(cx - 16, cy + 18); g.lineTo(cx + 16, cy + 18); g.closePath(); g.fill();
+  g.fillStyle = '#9aa0a6'; g.font = '24px system-ui'; g.fillText(`koers ${Math.round(s.r)}°`, cx, cy + R + 26);
+  g.textBaseline = 'alphabetic';
+  // kaartje van de route (noorden boven)
+  const kx = 776, ky = 12, kz = 232;
+  g.fillStyle = '#14161a'; g.fillRect(kx, ky, kz, kz);
+  const bx = Math.max(30, vlucht.maxX - vlucht.minX), by = Math.max(30, vlucht.maxY - vlucht.minY);
+  const schaal = (kz - 28) / Math.max(bx, by);
+  const ox = kx + kz / 2 - (vlucht.minX + vlucht.maxX) / 2 * schaal, oy = ky + kz / 2 + (vlucht.minY + vlucht.maxY) / 2 * schaal;
+  const P = p => [ox + p.x * schaal, oy - p.y * schaal];
+  g.lineWidth = 3; g.strokeStyle = '#3a414c'; g.beginPath();
+  vlucht.pt.forEach((p, i) => { const [x, y] = P(p); i ? g.lineTo(x, y) : g.moveTo(x, y); }); g.stroke();
+  g.strokeStyle = '#4f9cff'; g.beginPath();
+  for (const [i, p] of vlucht.pt.entries()) { if (p.t > t) break; const [x, y] = P(p); i ? g.lineTo(x, y) : g.moveTo(x, y); }
+  g.stroke();
+  const [px, py] = P(s), a = s.r * Math.PI / 180;
+  g.fillStyle = '#ffd166'; g.beginPath();
+  g.moveTo(px + 14 * Math.sin(a), py - 14 * Math.cos(a));
+  g.lineTo(px + 9 * Math.sin(a + 2.5), py - 9 * Math.cos(a + 2.5));
+  g.lineTo(px + 9 * Math.sin(a - 2.5), py - 9 * Math.cos(a - 2.5));
+  g.closePath(); g.fill();
+}
+(function hudLus() {   // op de pc / buiten VR het dashboard bijwerken
+  if (vlucht && $('cockpit').style.display !== 'none' && !(cRenderer && cRenderer.xr.isPresenting)) tekenHUD();
+  requestAnimationFrame(hudLus);
+})();
+$('speelPauze').addEventListener('click', () => { const v = $('vluchtVideo'); v.paused ? v.play() : v.pause(); });
+$('sluitCockpit').addEventListener('click', () => {
+  const v = $('vluchtVideo'); v.pause(); v.removeAttribute('src'); v.load();   // stopt ook het downloaden
+  $('cockpit').style.display = 'none'; vlucht = null;
+});
+
+// VR: groot gebogen scherm (110°) om je heen, dashboard onder je blik zoals in een cockpit
+function initCockpitVR() {
+  cRenderer = new THREE.WebGLRenderer({ antialias: true });
+  cRenderer.xr.enabled = true;
+  cRenderer.setPixelRatio(window.devicePixelRatio);
+  cScene = new THREE.Scene();
+  cScene.background = new THREE.Color(0x05070a);
+  cCamera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
+  const tex = new THREE.VideoTexture($('vluchtVideo'));
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const hoek = THREE.MathUtils.degToRad(110), R = 5, H = R * hoek * 9 / 16;
+  const geo = new THREE.CylinderGeometry(R, R, H, 96, 1, true, Math.PI - hoek / 2, hoek);
+  geo.scale(-1, 1, 1);                                   // binnenkant zichtbaar, beeld niet gespiegeld
+  cScherm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex }));
+  cHudTex = new THREE.CanvasTexture($('hud'));
+  cHudTex.colorSpace = THREE.SRGBColorSpace;
+  cHud = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.18), new THREE.MeshBasicMaterial({ map: cHudTex, transparent: true, opacity: 0.93 }));
+  cScene.add(cScherm, cHud);
+  let vorigeStick = 0;
+  cRenderer.setAnimationLoop(() => {
+    cHud.visible = !!vlucht;
+    if (vlucht) { tekenHUD(); cHudTex.needsUpdate = true; }
+    const sessie = cRenderer.xr.getSession();
+    if (sessie) {                                       // duimstick: 10 s terug/vooruit
+      let st = 0;
+      for (const bron of sessie.inputSources) {
+        const ax = bron.gamepad && bron.gamepad.axes; if (!ax) continue;
+        const x = ax.length > 2 ? ax[2] : ax[0];
+        if (x > 0.8) st = 1; else if (x < -0.8) st = -1;
+      }
+      if (st && st !== vorigeStick) {
+        const v = $('vluchtVideo');
+        v.currentTime = Math.max(0, Math.min((v.duration || 0) - 0.5, v.currentTime + st * 10));
+      }
+      vorigeStick = st;
+    }
+    cRenderer.render(cScene, cCamera);
+  });
+}
+$('instappen').addEventListener('click', async () => {
+  const v = $('vluchtVideo');
+  if (!vrMogelijk) { v.play(); $('cockpitTip').textContent = 'Instappen kan alleen in de VR-bril; hier speelt de video gewoon af.'; return; }
+  if (!cRenderer) initCockpitVR();
+  try {
+    v.play().catch(() => {});
+    const sessie = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['local-floor'] });
+    let hoogte = 1.6;
+    try { await sessie.requestReferenceSpace('local-floor'); cRenderer.xr.setReferenceSpaceType('local-floor'); }
+    catch { cRenderer.xr.setReferenceSpaceType('local'); hoogte = 0; }
+    await cRenderer.xr.setSession(sessie);
+    cScherm.position.set(0, hoogte, 0);
+    cHud.position.set(0, hoogte - 0.42, -0.85);
+    cHud.rotation.set(-0.55, 0, 0);
+    sessie.addEventListener('select', () => { v.paused ? v.play() : v.pause(); });
+    sessie.addEventListener('squeeze', () => sessie.end());
+    sessie.addEventListener('end', () => v.pause());
+  } catch (err) { $('cockpitTip').textContent = 'Instappen lukte niet: ' + err.message; }
 });
 
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
