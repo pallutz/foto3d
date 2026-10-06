@@ -80,7 +80,17 @@
     <summary>⚙ Instellingen en voorbeeld</summary>
     <div class="schuif" style="margin-top:14px">
       <span>Adres van de fotoserver (leeg laten als er geen server is):</span>
-      <input id="serverAdres" type="url" placeholder="https://192.168.11.2:8443" style="font-size:18px;padding:8px;border-radius:8px;border:1px solid #3a414c;background:#14161a;color:#e8eaed">
+      <input id="serverAdres" type="url" placeholder="https://paul3d.duckdns.org:8443" style="font-size:18px;padding:8px;border-radius:8px;border:1px solid #3a414c;background:#14161a;color:#e8eaed">
+    </div>
+    <div class="rij">
+      <div class="schuif">
+        <span>Grootte in de bril: <b id="grootteW">automatisch</b></span>
+        <input id="grootte" type="range" min="0" max="10" step="1" value="0">
+      </div>
+      <label style="display:flex;gap:10px;align-items:center;font-size:18px;color:var(--zacht)">
+        <input id="gebruikVerbeterd" type="checkbox" checked style="width:26px;height:26px">
+        Gebruik de verbeterde versie als die er is
+      </label>
     </div>
     <div class="rij">
       <div class="schuif">
@@ -327,11 +337,16 @@ let vrMogelijk = false;
 })();
 
 /* ---------- foto's van de (eigen) fotoserver ---------- */
-const STANDAARD_SERVER = 'https://192.168.11.2:8443';
+const STANDAARD_SERVER = 'https://paul3d.duckdns.org:8443';
 function serverAdres() {
   let a = '';
   try { a = localStorage.getItem('fotoserver'); } catch {}
   if (a === null || a === undefined) a = STANDAARD_SERVER;
+  // oud adres (van voor het echte certificaat) automatisch vervangen
+  if (/^https:\/\/192\.168\.11\.2:8443\/?$/.test(a.trim())) {
+    a = STANDAARD_SERVER;
+    try { localStorage.setItem('fotoserver', a); } catch {}
+  }
   return a.trim().replace(/\/+$/, '');
 }
 function toonServerKnop() {
@@ -355,22 +370,31 @@ function serverFout(err) {
   console.error(err);
   const a = serverAdres();
   $('bladerInhoud').innerHTML = `<p>De fotoserver is niet bereikbaar (${err.message}).</p>
-    <p>Eerste keer op dit apparaat? Open dan eerst <a href="${a}/" target="_blank">${a}</a>,
-    kies bij de waarschuwing <b>Geavanceerd → Toch doorgaan</b>, en probeer het daarna opnieuw.</p>
-    <p>Het adres pas je aan onder ⚙ Instellingen.</p>`;
+    <p>Controleer of je thuis op het wifi-netwerk zit en of de server aan staat.
+    Test: open <a href="${a}/" target="_blank">${a}</a>, daar hoort "✅ Fotoserver werkt" te staan.</p>
+    <p>Het adres pas je aan onder ⚙ Instellingen (leeg maken = geen server gebruiken).</p>`;
+}
+const HOOFDMAPPEN = { 'Fotos': "📷 Foto's", 'Verbeterd': '✨ Verbeterd', '3D': '🥽 3D' };
+function mapNaam(pad) {
+  if (!pad) return 'Kies een map';
+  const delen = pad.split('/');
+  delen[0] = HOOFDMAPPEN[delen[0]] || delen[0];
+  return delen.join(' / ');
 }
 async function openMap(pad) {
   huidigeMap = pad;
   $('bladeren').style.display = '';
-  $('bladerPad').textContent = '📁 ' + (pad || 'Foto\'s');
+  $('bladerPad').textContent = mapNaam(pad);
   $('omhoog').style.display = pad ? '' : 'none';
   $('bladerInhoud').innerHTML = '<p>Laden…</p>';
   try {
     const lijst = await (await serverVraag('/api/lijst', { pad })).json();
+    const verbeterd = lijst.verbeterd || {};
+    const is3D = pad.split('/')[0] === '3D';
     const doos = document.createElement('div'); doos.className = 'raster';
     for (const m of lijst.mappen) {
       const k = document.createElement('button'); k.className = 'map';
-      k.textContent = '📁 ' + m;
+      k.textContent = pad ? '📁 ' + m : (HOOFDMAPPEN[m] || '📁 ' + m);
       k.onclick = () => openMap(pad ? pad + '/' + m : m);
       doos.appendChild(k);
     }
@@ -379,9 +403,9 @@ async function openMap(pad) {
       const k = document.createElement('button'); k.className = 'mini';
       const img = document.createElement('img'); img.loading = 'lazy'; img.alt = f;
       img.src = serverAdres() + '/api/mini?' + new URLSearchParams({ pad: p });
-      const t = document.createElement('span'); t.textContent = f;
+      const t = document.createElement('span'); t.textContent = (verbeterd[f] ? '✨ ' : '') + f;
       k.append(img, t);
-      k.onclick = () => kiesServerFoto(p, f);
+      k.onclick = () => kiesServerFoto(p, f, { is3D, verbeterd: verbeterd[f] });
       doos.appendChild(k);
     }
     $('bladerInhoud').innerHTML = '';
@@ -389,17 +413,47 @@ async function openMap(pad) {
     else $('bladerInhoud').appendChild(doos);
   } catch (err) { serverFout(err); }
 }
-async function kiesServerFoto(pad, bestandsnaam) {
+async function kiesServerFoto(pad, bestandsnaam, info = {}) {
   $('bladeren').style.display = 'none';
-  status('Foto ophalen van de server…'); balk(0.05);
+  let bron = pad;
+  if (!info.is3D && info.verbeterd && $('gebruikVerbeterd').checked) bron = info.verbeterd;
+  status(bron !== pad ? 'Verbeterde versie ophalen…' : 'Foto ophalen van de server…'); balk(0.05);
   try {
-    const blob = await (await serverVraag('/api/foto', { pad })).blob();
-    await verwerk(new File([blob], bestandsnaam, { type: blob.type }));
+    const blob = await (await serverVraag('/api/foto', { pad: bron })).blob();
+    const bestand = new File([blob], bestandsnaam, { type: blob.type });
+    if (info.is3D) await toonKlaar3D(bestand);
+    else await verwerk(bestand);
   } catch (err) { balk(0); status('Foto ophalen mislukt: ' + err.message); }
 }
+
+/* ---------- kant-en-klare 3D-foto (links|rechts naast elkaar) direct tonen ---------- */
+async function toonKlaar3D(bestand) {
+  naam = bestand.name.replace(/\.[^.]+$/, '').replace(/_LR$/i, '');
+  const bmp = await decodeer(bestand);
+  const half = Math.floor(bmp.width / 2), h = bmp.height;
+  const maak = (x) => { const c = document.createElement('canvas'); c.width = half; c.height = h;
+    c.getContext('2d').drawImage(bmp, x, 0, half, h, 0, 0, half, h); return c; };
+  links = maak(0); rechts = maak(half);
+  foto = null; diepte = null;                       // niets te berekenen
+  const s = $('sbs'); s.width = half * 2; s.height = h;
+  s.getContext('2d').drawImage(bmp, 0, 0);
+  balk(0);
+  $('opslaan').disabled = false;
+  $('vr').disabled = !vrMogelijk;
+  status(vrMogelijk ? '✅ Kant-en-klare 3D-foto. Druk op de groene knop 🥽 Bekijk in 3D.'
+                    : '✅ Kant-en-klare 3D-foto geladen. Bekijken kan alleen in de VR-bril.');
+  if (vrSessie) zetVRBeeld();
+}
+
 $('serverKnop').addEventListener('click', () => openMap(huidigeMap));
 $('omhoog').addEventListener('click', () => openMap(huidigeMap.split('/').slice(0, -1).join('/')));
 $('sluitBladeren').addEventListener('click', () => { $('bladeren').style.display = 'none'; });
+
+$('grootte').addEventListener('input', () => {
+  const v = parseInt($('grootte').value, 10);
+  $('grootteW').textContent = v ? (0.5 + v * 0.25).toFixed(2).replace('.', ',') + ' m breed' : 'automatisch';
+  if (vrSessie && links) zetVRBeeld();
+});
 
 let wachtrij = null;
 for (const id of ['sterkte', 'vlak']) {
@@ -449,11 +503,22 @@ function initVR() {
   camera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
   renderer.setAnimationLoop(() => renderer.render(scene, camera));
 }
+// Breedte van de foto in de bril (meter, op 2,2 m afstand).
+// Automatisch: kleine/oude foto's kleiner tonen, zodat onscherpte niet uitvergroot wordt.
+function vlakBreedte(canvas) {
+  const keuze = parseInt($('grootte').value, 10);
+  const staand = canvas.height > canvas.width;
+  if (keuze > 0) return 0.5 + keuze * 0.25;                       // 0,75 m .. 3,0 m
+  const px = Math.max(canvas.width, canvas.height);
+  let b = Math.min(2.6, Math.max(0.8, px / 1300));                // ~1300 px per meter
+  if (staand) b *= canvas.width / canvas.height;                   // staande foto: hoogte begrenzen
+  return Math.max(0.6, b);
+}
 function maakVlak(canvas, laag, ooghoogte = 1.6) {
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const breedte = 2.6, hoogte = breedte * canvas.height / canvas.width;
+  const breedte = vlakBreedte(canvas), hoogte = breedte * canvas.height / canvas.width;
   const m = new THREE.Mesh(new THREE.PlaneGeometry(breedte, hoogte), new THREE.MeshBasicMaterial({ map: tex }));
   m.position.set(0, ooghoogte, -2.2);
   m.layers.set(laag);               // laag 1 = linkeroog, laag 2 = rechteroog
