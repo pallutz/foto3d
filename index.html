@@ -57,7 +57,7 @@
 <body>
 <main>
   <h1>Foto naar 3D</h1>
-<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit 2</div>
+<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit 3</div>
   <p class="sub">1. Kies een foto &nbsp;·&nbsp; 2. Even wachten &nbsp;·&nbsp; 3. Bekijk in 3D. De foto blijft in dit apparaat.</p>
 
   <div class="paneel">
@@ -703,6 +703,21 @@ $('sluitCockpit').addEventListener('click', () => {
 });
 
 // VR: groot gebogen scherm (110°) om je heen, dashboard onder je blik zoals in een cockpit
+// Gebogen scherm met dezelfde verhouding als de video: 16:9 drone = 110° breed,
+// staande of 4:3 telefoonvideo = smaller, zelfde hoogte (anders wordt het beeld uitgerekt)
+function schermVorm(verhouding) {
+  const R = 5, H = R * THREE.MathUtils.degToRad(110) * 9 / 16;
+  const hoek = Math.min(Math.PI * 1.5, H * verhouding / R);
+  const geo = new THREE.CylinderGeometry(R, R, H, 96, 1, true, Math.PI - hoek / 2, hoek);
+  geo.scale(-1, 1, 1);                                   // binnenkant zichtbaar, beeld niet gespiegeld
+  return geo;
+}
+function pasSchermAan() {
+  const v = $('vluchtVideo');
+  if (!cScherm || !v.videoWidth) return;
+  cScherm.geometry.dispose();
+  cScherm.geometry = schermVorm(v.videoWidth / v.videoHeight);
+}
 function initCockpitVR() {
   cRenderer = new THREE.WebGLRenderer({ antialias: true });
   cRenderer.xr.enabled = true;
@@ -712,10 +727,8 @@ function initCockpitVR() {
   cCamera = new THREE.PerspectiveCamera(70, 1, 0.05, 100);
   const tex = new THREE.VideoTexture($('vluchtVideo'));
   tex.colorSpace = THREE.SRGBColorSpace;
-  const hoek = THREE.MathUtils.degToRad(110), R = 5, H = R * hoek * 9 / 16;
-  const geo = new THREE.CylinderGeometry(R, R, H, 96, 1, true, Math.PI - hoek / 2, hoek);
-  geo.scale(-1, 1, 1);                                   // binnenkant zichtbaar, beeld niet gespiegeld
-  cScherm = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex }));
+  cScherm = new THREE.Mesh(schermVorm(16 / 9), new THREE.MeshBasicMaterial({ map: tex }));
+  $('vluchtVideo').addEventListener('loadedmetadata', pasSchermAan);
   cHudTex = new THREE.CanvasTexture($('hud'));
   cHudTex.colorSpace = THREE.SRGBColorSpace;
   cHud = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.18), new THREE.MeshBasicMaterial({ map: cHudTex, transparent: true, opacity: 0.93 }));
@@ -756,6 +769,7 @@ $('instappen').addEventListener('click', async () => {
     catch { cRenderer.xr.setReferenceSpaceType('local'); hoogte = 0; }
     await cRenderer.xr.setSession(sessie);
     cScherm.position.set(0, hoogte, 0);
+    pasSchermAan();
     // ~36° onder ooghoogte, schuin naar je toe: kijk omlaag voor de instrumenten
     cHud.position.set(0, hoogte - 0.8, -1.1);
     cHud.rotation.set(-0.63, 0, 0);
