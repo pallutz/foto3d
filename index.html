@@ -327,7 +327,7 @@ async function verwerk(bestand) {
     console.error(err); balk(0); status('Er ging iets mis: ' + err.message);
   }
 }
-$('bestand').addEventListener('change', e => verwerk(e.target.files[0]));
+$('bestand').addEventListener('change', e => { serverSubmap = ''; verwerk(e.target.files[0]); });
 
 /* ---------- is VR mogelijk op dit apparaat? ---------- */
 let vrMogelijk = false;
@@ -360,6 +360,7 @@ $('serverAdres').addEventListener('change', () => {
 toonServerKnop();
 
 let huidigeMap = '';
+let serverSubmap = '';   // submap van de huidige foto (bijv. '1975'), zodat de 3D-foto op dezelfde plek in 3D/ komt
 async function serverVraag(pad, params) {
   const url = serverAdres() + pad + '?' + new URLSearchParams(params);
   const r = await fetch(url, { mode: 'cors' });
@@ -415,6 +416,7 @@ async function openMap(pad) {
 }
 async function kiesServerFoto(pad, bestandsnaam, info = {}) {
   $('bladeren').style.display = 'none';
+  serverSubmap = pad.split('/').slice(1, -1).join('/');   // 'Fotos/1975/oma.jpg' -> '1975'
   let bron = pad;
   if (!info.is3D && info.verbeterd && $('gebruikVerbeterd').checked) bron = info.verbeterd;
   status(bron !== pad ? 'Verbeterde versie ophalen…' : 'Foto ophalen van de server…'); balk(0.05);
@@ -468,6 +470,23 @@ for (const id of ['sterkte', 'vlak']) {
 $('opslaan').addEventListener('click', async () => {
   const bestandsnaam = `${naam}_LR.jpg`;
   const blob = await new Promise(r => $('sbs').toBlob(r, 'image/jpeg', 0.92));
+  // Is er een fotoserver? Dan daar opslaan in de map 3D (zelfde submap als de originele foto)
+  if (serverAdres()) {
+    const doel = serverSubmap ? `${serverSubmap}/${bestandsnaam}` : bestandsnaam;
+    status('3D-foto opslaan op de server…');
+    try {
+      const r = await fetch(serverAdres() + '/api/opslaan?' + new URLSearchParams({ map: '3D', naam: doel }), {
+        method: 'POST', mode: 'cors', headers: { 'Content-Type': 'image/jpeg' }, body: blob
+      });
+      const antw = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(antw.fout || `server antwoordt ${r.status}`);
+      status(`✅ Opgeslagen op de server: ${mapNaam(antw.pad)}`);
+      return;
+    } catch (e) {
+      console.warn('Opslaan op server mislukt, val terug op download', e);
+      alert(`Opslaan op de server lukte niet (${e.message}).\nDe 3D-foto wordt nu in Downloads gezet.`);
+    }
+  }
   // Chrome/Edge op de pc: zelf map kiezen en bestaand bestand kunnen overschrijven
   if (window.showSaveFilePicker) {
     try {
