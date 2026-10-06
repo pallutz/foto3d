@@ -57,7 +57,7 @@
 <body>
 <main>
   <h1>Foto naar 3D</h1>
-<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit</div>
+<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit 2</div>
   <p class="sub">1. Kies een foto &nbsp;·&nbsp; 2. Even wachten &nbsp;·&nbsp; 3. Bekijk in 3D. De foto blijft in dit apparaat.</p>
 
   <div class="paneel">
@@ -92,7 +92,7 @@
       <button id="instappen" class="groen">🚁 Instappen</button>
       <button id="speelPauze" class="tweede">⏯ Afspelen / pauze</button>
     </div>
-    <p id="cockpitTip">In de bril: trekker = afspelen/pauze · duimstick links/rechts = 10 s terug/vooruit · knijpknop = uitstappen</p>
+    <p id="cockpitTip">In de bril: trekker = afspelen/pauze · duimstick links/rechts = 10 s terug/vooruit · A/X = dashboard aan/uit · knijpknop = uitstappen</p>
   </div>
 
   <details>
@@ -720,18 +720,21 @@ function initCockpitVR() {
   cHudTex.colorSpace = THREE.SRGBColorSpace;
   cHud = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.18), new THREE.MeshBasicMaterial({ map: cHudTex, transparent: true, opacity: 0.93 }));
   cScene.add(cScherm, cHud);
-  let vorigeStick = 0;
+  let vorigeStick = 0, vorigeKnop = false, hudAan = true;
   cRenderer.setAnimationLoop(() => {
-    cHud.visible = !!vlucht;
+    cHud.visible = !!vlucht && hudAan;
     if (vlucht) { tekenHUD(); cHudTex.needsUpdate = true; }
     const sessie = cRenderer.xr.getSession();
     if (sessie) {                                       // duimstick: 10 s terug/vooruit
-      let st = 0;
+      let st = 0, knop = false;
       for (const bron of sessie.inputSources) {
-        const ax = bron.gamepad && bron.gamepad.axes; if (!ax) continue;
-        const x = ax.length > 2 ? ax[2] : ax[0];
+        const gp = bron.gamepad; if (!gp) continue;
+        const ax = gp.axes, x = ax.length > 2 ? ax[2] : ax[0];
         if (x > 0.8) st = 1; else if (x < -0.8) st = -1;
+        if (gp.buttons[4] && gp.buttons[4].pressed) knop = true;   // A- of X-knop
       }
+      if (knop && !vorigeKnop) hudAan = !hudAan;                // dashboard aan/uit
+      vorigeKnop = knop;
       if (st && st !== vorigeStick) {
         const v = $('vluchtVideo');
         v.currentTime = Math.max(0, Math.min((v.duration || 0) - 0.5, v.currentTime + st * 10));
@@ -753,8 +756,9 @@ $('instappen').addEventListener('click', async () => {
     catch { cRenderer.xr.setReferenceSpaceType('local'); hoogte = 0; }
     await cRenderer.xr.setSession(sessie);
     cScherm.position.set(0, hoogte, 0);
-    cHud.position.set(0, hoogte - 0.42, -0.85);
-    cHud.rotation.set(-0.55, 0, 0);
+    // ~36° onder ooghoogte, schuin naar je toe: kijk omlaag voor de instrumenten
+    cHud.position.set(0, hoogte - 0.8, -1.1);
+    cHud.rotation.set(-0.63, 0, 0);
     sessie.addEventListener('select', () => { v.paused ? v.play() : v.pause(); });
     sessie.addEventListener('squeeze', () => sessie.end());
     sessie.addEventListener('end', () => v.pause());
