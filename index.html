@@ -47,7 +47,12 @@
   .beelden figure { margin:0; }
   .beelden figcaption { color:var(--zacht); font-size:15px; }
   #sbs { width:100%; border-radius:8px; margin-top:12px; background:#000; }
-  button.video { background:#2c323b; min-height:90px; }
+  button.mini { position:relative; }
+  button.mini b.duur { position:absolute; top:16px; right:16px; background:rgba(0,0,0,.72); color:#fff;
+    font-size:15px; font-weight:600; padding:2px 8px; border-radius:6px; }
+  .filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+  .filters button { min-height:0; padding:8px 14px; font-size:16px; font-weight:500; background:#2c323b; border-radius:20px; }
+  .filters button.aan { background:var(--accent); }
   #vluchtVideo { width:100%; border-radius:8px; background:#000; display:block; }
   #hud { width:100%; border-radius:8px; margin-top:10px; background:#0b0d10; display:block; }
   #cockpitTip { color:var(--zacht); font-size:16px; margin:10px 0 0; }
@@ -57,7 +62,7 @@
 <body>
 <main>
   <h1>Foto naar 3D</h1>
-<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit 3</div>
+<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit 4</div>
   <p class="sub">1. Kies een foto &nbsp;·&nbsp; 2. Even wachten &nbsp;·&nbsp; 3. Bekijk in 3D. De foto blijft in dit apparaat.</p>
 
   <div class="paneel">
@@ -401,6 +406,33 @@ function mapNaam(pad) {
   delen[0] = HOOFDMAPPEN[delen[0]] || delen[0];
   return delen.join(' / ');
 }
+// filterknoppen boven de foto's/video's: Alles · Foto's · Video's · per extensie (blijft bewaard tussen mappen)
+let bladerFilter = 'alles';
+function maakFilterBalk(items, ext, doos) {
+  const telling = {};
+  for (const it of items) telling[ext(it.n)] = (telling[ext(it.n)] || 0) + 1;
+  const nFoto = items.filter(i => !i.video).length, nVideo = items.length - nFoto;
+  const knoppen = [['alles', `Alles (${items.length})`]];
+  if (nFoto && nVideo) knoppen.push(['foto', `📷 Foto's (${nFoto})`], ['video', `🎬 Video's (${nVideo})`]);
+  const soorten = Object.keys(telling).sort();
+  if (soorten.length > 1) for (const e of soorten) knoppen.push([e, `${e} (${telling[e]})`]);
+  const balk = document.createElement('div'); balk.className = 'filters';
+  for (const [waarde, tekst] of knoppen) {
+    const k = document.createElement('button'); k.textContent = tekst;
+    k.classList.toggle('aan', waarde === bladerFilter);
+    k.onclick = () => {
+      bladerFilter = waarde;
+      for (const b of balk.children) b.classList.toggle('aan', b === k);
+      for (const m of doos.querySelectorAll('button.mini')) {
+        const ok = waarde === 'alles' || (waarde === 'foto' && !m.dataset.video)
+          || (waarde === 'video' && m.dataset.video) || waarde === m.dataset.ext;
+        m.style.display = ok ? '' : 'none';
+      }
+    };
+    balk.appendChild(k);
+  }
+  return balk;
+}
 async function openMap(pad) {
   huidigeMap = pad;
   $('bladeren').style.display = '';
@@ -418,27 +450,37 @@ async function openMap(pad) {
       k.onclick = () => openMap(pad ? pad + '/' + m : m);
       doos.appendChild(k);
     }
-    for (const f of lijst.fotos) {
-      const p = pad ? pad + '/' + f : f;
+    // foto's en video's door elkaar, op naam (= op datum) gesorteerd
+    const videos = lijst.videos || [], duur = lijst.duur || {};
+    const items = [...lijst.fotos.map(n => ({ n, video: false })), ...videos.map(n => ({ n, video: true }))]
+      .sort((a, b) => a.n.localeCompare(b.n, 'nl', { numeric: true, sensitivity: 'base' }));
+    const ext = n => (n.match(/\.[^.]+$/) || [''])[0].toLowerCase();
+    const past = it => bladerFilter === 'alles' || (bladerFilter === 'foto' && !it.video)
+      || (bladerFilter === 'video' && it.video) || bladerFilter === ext(it.n);
+    if (!items.some(past)) bladerFilter = 'alles';          // filter past niet bij deze map: alles tonen
+    for (const it of items) {
+      const f = it.n, p = pad ? pad + '/' + f : f;
       const k = document.createElement('button'); k.className = 'mini';
+      k.style.display = past(it) ? '' : 'none';
+      k.dataset.video = it.video ? '1' : ''; k.dataset.ext = ext(f);
       const img = document.createElement('img'); img.loading = 'lazy'; img.alt = f;
       img.src = serverAdres() + '/api/mini?' + new URLSearchParams({ pad: p });
       const t = document.createElement('span'); t.textContent = (verbeterd[f] ? '✨ ' : '') + f;
       k.append(img, t);
-      k.onclick = () => kiesServerFoto(p, f, { is3D, verbeterd: verbeterd[f] });
-      doos.appendChild(k);
-    }
-    const videos = lijst.videos || [];
-    for (const v of videos) {
-      const p = pad ? pad + '/' + v : v;
-      const k = document.createElement('button'); k.className = 'video';
-      k.textContent = '🎬 ' + v.replace(/\.[^.]+$/, '').replace(/_/g, ' ');
-      k.onclick = () => openVlucht(p);
+      if (it.video) {
+        const b = document.createElement('b'); b.className = 'duur';
+        b.textContent = '▶' + (duur[f] != null ? ' ' + tijd(duur[f]) : '');
+        k.append(b);
+        k.onclick = () => openVlucht(p);
+      } else {
+        k.onclick = () => kiesServerFoto(p, f, { is3D, verbeterd: verbeterd[f] });
+      }
       doos.appendChild(k);
     }
     $('bladerInhoud').innerHTML = '';
-    if (!lijst.mappen.length && !lijst.fotos.length && !videos.length) $('bladerInhoud').innerHTML = '<p>Deze map is leeg.</p>';
-    else $('bladerInhoud').appendChild(doos);
+    if (!lijst.mappen.length && !items.length) { $('bladerInhoud').innerHTML = '<p>Deze map is leeg.</p>'; return; }
+    if (items.length) $('bladerInhoud').appendChild(maakFilterBalk(items, ext, doos));
+    $('bladerInhoud').appendChild(doos);
   } catch (err) { serverFout(err); }
 }
 async function kiesServerFoto(pad, bestandsnaam, info = {}) {
