@@ -361,7 +361,8 @@ let vrMogelijk = false;
 })();
 
 /* ---------- foto's van de (eigen) fotoserver ---------- */
-const STANDAARD_SERVER = 'https://paul3d.duckdns.org:8443';
+// Draait de app op de fotoserver zelf (…:8443/app/), dan is dat ook de fotoserver; anders (GitHub) de thuisserver
+const STANDAARD_SERVER = location.port === '8443' ? location.origin : 'https://paul3d.duckdns.org:8443';
 function serverAdres() {
   let a = '';
   try { a = localStorage.getItem('fotoserver'); } catch {}
