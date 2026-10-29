@@ -69,7 +69,7 @@
 <body>
 <main>
   <h1>Foto naar 3D</h1>
-<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 29 okt · drone-cockpit 7 (eigen drone-video)</div>
+<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 29 okt · drone-cockpit 7b (eigen drone-video)</div>
   <p class="sub">1. Kies een foto &nbsp;·&nbsp; 2. Even wachten &nbsp;·&nbsp; 3. Bekijk in 3D. De foto blijft in dit apparaat.</p>
 
   <div class="paneel">
@@ -375,10 +375,8 @@ let vrMogelijk = false;
 })();
 
 /* ---------- foto's van de (eigen) fotoserver ---------- */
-// Draait de app op de fotoserver zelf (…:8443/app/), dan is dat ook de fotoserver.
-// Elders (GitHub, de kleinkinderen) standaard GEEN server: alleen foto's en video's van het eigen apparaat.
-// (Een serveradres kan desgewenst onder ⚙ Instellingen ingevuld worden.)
-const STANDAARD_SERVER = location.port === '8443' ? location.origin : '';
+// Draait de app op de fotoserver zelf (…:8443/app/), dan is dat ook de fotoserver; anders (GitHub) de thuisserver
+const STANDAARD_SERVER = location.port === '8443' ? location.origin : 'https://paul3d.duckdns.org:8443';
 function serverAdres() {
   let a = '';
   try { a = localStorage.getItem('fotoserver'); } catch {}
