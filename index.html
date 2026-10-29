@@ -56,13 +56,20 @@
   #vluchtVideo { width:100%; border-radius:8px; background:#000; display:block; }
   #hud { width:100%; border-radius:8px; margin-top:10px; background:#0b0d10; display:block; }
   #cockpitTip { color:var(--zacht); font-size:16px; margin:10px 0 0; }
+  h3.jaar { margin:18px 0 8px; font-size:22px; color:var(--zacht); }
+  h3.jaar:first-child { margin-top:0; }
+  button.mini small { font-size:13px; color:var(--zacht); }
+  .geluidRij { display:flex; flex-wrap:wrap; gap:20px; align-items:center; margin-top:12px; font-size:18px; color:var(--zacht); }
+  .geluidRij label { display:flex; gap:10px; align-items:center; }
+  .geluidRij input[type=checkbox] { width:26px; height:26px; }
+  .geluidRij input[type=range] { width:220px; height:32px; }
   @media (max-width:640px){ .grote-knoppen, .beelden { grid-template-columns:1fr; } }
 </style>
 </head>
 <body>
 <main>
   <h1>Foto naar 3D</h1>
-<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 6 okt · drone-cockpit 4</div>
+<div style="opacity:.55;font-size:14px;margin:-8px 0 12px">versie 29 okt · drone-cockpit 7 (eigen drone-video)</div>
   <p class="sub">1. Kies een foto &nbsp;·&nbsp; 2. Even wachten &nbsp;·&nbsp; 3. Bekijk in 3D. De foto blijft in dit apparaat.</p>
 
   <div class="paneel">
@@ -70,8 +77,11 @@
       <label class="knop" for="bestand">📷 Kies foto</label>
       <button id="vr" class="groen" disabled>🥽 Bekijk in 3D</button>
       <button id="serverKnop" class="paars">📁 Foto's van server</button>
+      <button id="droneKnop" class="paars">🚁 Drone-vluchten</button>
+      <button id="eigenDroneKnop" class="paars">🚁 Eigen drone-video</button>
     </div>
     <input id="bestand" type="file" accept="image/*,.heic,.heif">
+    <input id="eigenDroneBestand" type="file" multiple accept="video/*,.mp4,.MP4,.mov,.MOV,.srt,.SRT">
     <div id="status">Even geduld, het programma wordt geladen…</div>
     <div id="voortgang"><div></div></div>
     <div style="margin-top:14px"><button id="opslaan" class="tweede" disabled>💾 Bewaar 3D-foto</button></div>
@@ -97,7 +107,11 @@
       <button id="instappen" class="groen">🚁 Instappen</button>
       <button id="speelPauze" class="tweede">⏯ Afspelen / pauze</button>
     </div>
-    <p id="cockpitTip">In de bril: trekker = afspelen/pauze · duimstick links/rechts = 10 s terug/vooruit · A/X = dashboard aan/uit · knijpknop = uitstappen</p>
+    <div class="geluidRij">
+      <label><input id="heliAan" type="checkbox" checked> 🚁 Helikoptergeluid</label>
+      <label>Volume <input id="heliVolume" type="range" min="0" max="100" step="5" value="35"></label>
+    </div>
+    <p id="cockpitTip">In de bril: trekker = afspelen/pauze · duimstick links/rechts = 10 s terug/vooruit · A/X = dashboard aan/uit · B/Y = helikoptergeluid aan/uit · knijpknop = uitstappen</p>
   </div>
 
   <details>
@@ -361,8 +375,10 @@ let vrMogelijk = false;
 })();
 
 /* ---------- foto's van de (eigen) fotoserver ---------- */
-// Draait de app op de fotoserver zelf (…:8443/app/), dan is dat ook de fotoserver; anders (GitHub) de thuisserver
-const STANDAARD_SERVER = location.port === '8443' ? location.origin : 'https://paul3d.duckdns.org:8443';
+// Draait de app op de fotoserver zelf (…:8443/app/), dan is dat ook de fotoserver.
+// Elders (GitHub, de kleinkinderen) standaard GEEN server: alleen foto's en video's van het eigen apparaat.
+// (Een serveradres kan desgewenst onder ⚙ Instellingen ingevuld worden.)
+const STANDAARD_SERVER = location.port === '8443' ? location.origin : '';
 function serverAdres() {
   let a = '';
   try { a = localStorage.getItem('fotoserver'); } catch {}
@@ -376,6 +392,7 @@ function serverAdres() {
 }
 function toonServerKnop() {
   $('serverKnop').style.display = serverAdres() ? '' : 'none';
+  $('droneKnop').style.display = serverAdres() ? '' : 'none';
 }
 $('serverAdres').value = serverAdres();
 $('serverAdres').addEventListener('change', () => {
@@ -466,7 +483,8 @@ async function openMap(pad) {
       k.dataset.video = it.video ? '1' : ''; k.dataset.ext = ext(f);
       const img = document.createElement('img'); img.loading = 'lazy'; img.alt = f;
       img.src = serverAdres() + '/api/mini?' + new URLSearchParams({ pad: p });
-      const t = document.createElement('span'); t.textContent = (verbeterd[f] ? '✨ ' : '') + f;
+      const t = document.createElement('span');
+      t.textContent = (verbeterd[f] ? '✨ ' : '') + (it.video && droneVideos.has(p) ? '🚁 ' : '') + f;
       k.append(img, t);
       if (it.video) {
         const b = document.createElement('b'); b.className = 'duur';
@@ -518,6 +536,147 @@ async function toonKlaar3D(bestand) {
 }
 
 $('serverKnop').addEventListener('click', () => openMap(huidigeMap));
+$('droneKnop').addEventListener('click', openDroneVluchten);
+
+/* ---------- 🚁 Drone-vluchten: alle drone-video's uit het hele archief in één lijst ----------
+   De server maakt elke ochtend /app/drone_vluchten.json (maak_drone_lijst.py). Daarin staat elke
+   video die van een drone komt: met .SRT-vluchtlog (dan ook dashboard) of zonder (Mini 3 e.d.).
+   Al die video's krijgen in de cockpit het helikoptergeluid. */
+let droneLijst = null;                 // [{pad, naam, datum, plaats, toestel, duur, srt}]
+const droneVideos = new Set();         // paden, ook gebruikt bij gewoon bladeren (🚁-teken, geluid)
+async function laadDroneLijst(opnieuw = false) {
+  if (droneLijst && !opnieuw) return droneLijst;
+  const r = await fetch(serverAdres() + '/app/drone_vluchten.json?t=' + Date.now(), { mode: 'cors', cache: 'no-store' });
+  if (!r.ok) throw new Error(`lijst niet gevonden (${r.status})`);
+  droneLijst = (await r.json()).vluchten || [];
+  droneVideos.clear();
+  for (const x of droneLijst) droneVideos.add(x.pad);
+  return droneLijst;
+}
+if (serverAdres()) laadDroneLijst().catch(() => {});      // stil vooraf laden
+async function openDroneVluchten() {
+  $('bladeren').style.display = '';
+  $('bladerPad').textContent = '🚁 Drone-vluchten';
+  huidigeMap = '';
+  $('omhoog').style.display = '';                          // omhoog = naar de mappen
+  $('bladerInhoud').innerHTML = '<p>Laden…</p>';
+  $('bladeren').scrollIntoView({ behavior: 'smooth' });
+  let lijst;
+  try { lijst = await laadDroneLijst(true); }
+  catch (err) {
+    $('bladerInhoud').innerHTML = `<p>De lijst met drone-vluchten is er (nog) niet: ${err.message}.</p>
+      <p>Op de server maken met: <code>maak_drone_lijst.py</code></p>`;
+    return;
+  }
+  if (!lijst.length) { $('bladerInhoud').innerHTML = '<p>Geen drone-video\'s gevonden.</p>'; return; }
+  const doos = document.createElement('div');
+  let jaar = null, raster = null;
+  for (const x of lijst) {                                  // nieuwste eerst, per jaar een kopje
+    const j = (x.datum || '????').slice(0, 4);
+    if (j !== jaar) {
+      jaar = j;
+      const h = document.createElement('h3'); h.className = 'jaar';
+      h.textContent = j === '????' ? 'Zonder datum' : j;
+      raster = document.createElement('div'); raster.className = 'raster';
+      doos.append(h, raster);
+    }
+    const k = document.createElement('button'); k.className = 'mini';
+    const img = document.createElement('img'); img.loading = 'lazy'; img.alt = x.naam;
+    img.src = serverAdres() + '/api/mini?' + new URLSearchParams({ pad: x.pad });
+    const t = document.createElement('span');
+    const d = x.datum ? x.datum.split('-').reverse().join('-') : '';
+    t.textContent = [d, x.plaats].filter(Boolean).join(' · ') || x.naam;
+    const s = document.createElement('small');
+    s.textContent = (x.toestel || 'drone') + (x.srt ? ' · 📈 dashboard' : '');
+    const b = document.createElement('b'); b.className = 'duur';
+    b.textContent = '▶' + (x.duur != null ? ' ' + tijd(x.duur) : '');
+    k.append(img, t, s, b);
+    k.onclick = () => openVlucht(x.pad);
+    raster.appendChild(k);
+  }
+  $('bladerInhoud').innerHTML = '';
+  const tel = document.createElement('p'); tel.style.cssText = 'color:var(--zacht);margin:0 0 12px';
+  tel.textContent = `${lijst.length} drone-video's · 📈 = met vluchtgegevens (hoogte, snelheid, kaartje)`;
+  $('bladerInhoud').append(tel, doos);
+}
+
+/* ---------- 🚁 Eigen drone-video: video (+ .SRT) van dit apparaat, zonder server ----------
+   Kies één of meer drone-video's, eventueel met de .SRT-bestanden van dezelfde vlucht erbij
+   (zelfde naam, bv. DJI_0012.MP4 + DJI_0012.SRT). Alles gebeurt in de browser zelf:
+   er gaat niets naar een server. */
+let eigenDrone = false, eigenUrl = null;
+$('eigenDroneKnop').addEventListener('click', () => $('eigenDroneBestand').click());
+$('eigenDroneBestand').addEventListener('change', e => {
+  const bestanden = [...e.target.files];
+  e.target.value = '';                                       // zelfde bestand later opnieuw kunnen kiezen
+  const isSrt = f => /\.srt$/i.test(f.name);
+  const stam = n => n.replace(/\.[^.]+$/, '').toLowerCase();
+  const videos = bestanden.filter(f => !isSrt(f)), srts = bestanden.filter(isSrt);
+  if (!videos.length) { status('Kies ook de video zelf (bijvoorbeeld DJI_0012.MP4), niet alleen het .SRT-bestand.'); return; }
+  const srtVoor = v => srts.find(s => stam(s.name) === stam(v.name))
+    || (videos.length === 1 && srts.length === 1 ? srts[0] : null);
+  if (videos.length === 1) { openEigenVlucht(videos[0], srtVoor(videos[0])); return; }
+  // meerdere video's gekozen: lijstje tonen
+  $('bladeren').style.display = '';
+  $('bladerPad').textContent = '🚁 Eigen drone-video\'s';
+  $('omhoog').style.display = 'none';
+  const doos = document.createElement('div'); doos.className = 'raster';
+  videos.sort((a, b) => a.name.localeCompare(b.name, 'nl', { numeric: true }));
+  for (const v of videos) {
+    const srt = srtVoor(v);
+    const k = document.createElement('button'); k.className = 'map';
+    k.textContent = '🎬 ' + v.name + (srt ? ' · 📈' : '');
+    k.onclick = () => openEigenVlucht(v, srt);
+    doos.appendChild(k);
+  }
+  const uitleg = document.createElement('p'); uitleg.style.cssText = 'color:var(--zacht);margin:0 0 12px';
+  uitleg.textContent = `${videos.length} video's · 📈 = met vluchtgegevens (.SRT) erbij`;
+  $('bladerInhoud').innerHTML = '';
+  $('bladerInhoud').append(uitleg, doos);
+  $('bladeren').scrollIntoView({ behavior: 'smooth' });
+});
+// DJI-.SRT (vluchtlog naast de video) omzetten naar punten [tijd, lat, lon, hoogte]
+function leesSrt(tekst) {
+  const getal = (re, t) => { const m = t.match(re); return m ? parseFloat(m[1]) : null; };
+  const punten = [];
+  let vorigeT = -1;
+  for (const blok of tekst.replace(/\r/g, '').split(/\n\s*\n/)) {
+    const tm = blok.match(/(\d+):(\d+):(\d+)[,.](\d+)\s*-->/);
+    if (!tm) continue;
+    const t = +tm[1] * 3600 + +tm[2] * 60 + +tm[3] + +('0.' + tm[4]);
+    let la = getal(/latitude\s*:\s*(-?\d+(?:\.\d+)?)/i, blok), lo = getal(/longitude\s*:\s*(-?\d+(?:\.\d+)?)/i, blok);
+    if (la === null || lo === null) {                       // oudere DJI's: GPS(lengte,breedte,hoogte)
+      const g = blok.match(/GPS\s*\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)/i);
+      if (g) { lo = parseFloat(g[1]); la = parseFloat(g[2]); }
+    }
+    if (la === null || lo === null || (Math.abs(la) < 0.0001 && Math.abs(lo) < 0.0001)) continue;
+    const h = getal(/rel_alt\s*:\s*(-?\d+(?:\.\d+)?)/i, blok)
+      ?? getal(/BAROMETER\s*:\s*(-?\d+(?:\.\d+)?)/i, blok)
+      ?? getal(/\bH\s*:?\s*(-?\d+(?:\.\d+)?)\s*m/, blok);
+    if (t - vorigeT < 0.2) continue;                         // ~5 punten per seconde is genoeg
+    vorigeT = t;
+    punten.push([t, la, lo, h]);
+  }
+  return punten;
+}
+async function openEigenVlucht(bestand, srt) {
+  $('bladeren').style.display = 'none';
+  $('cockpit').style.display = '';
+  $('vluchtNaam').textContent = '🎬 ' + bestand.name + (srt ? '' : ' (zonder .SRT: geen dashboard)');
+  const v = $('vluchtVideo');
+  if (eigenUrl) URL.revokeObjectURL(eigenUrl);
+  eigenUrl = URL.createObjectURL(bestand);
+  v.src = eigenUrl;
+  huidigeVideo = ''; eigenDrone = true;
+  vlucht = null;
+  if (srt) {
+    try { vlucht = bereidVluchtVoor(leesSrt(await srt.text())); }
+    catch (err) { console.warn('SRT lezen mislukt', err); vlucht = null; }
+  }
+  $('hud').style.display = vlucht ? '' : 'none';
+  tekenHUD();
+  $('cockpit').scrollIntoView({ behavior: 'smooth' });
+}
 $('omhoog').addEventListener('click', () => openMap(huidigeMap.split('/').slice(0, -1).join('/')));
 $('sluitBladeren').addEventListener('click', () => { $('bladeren').style.display = 'none'; });
 
@@ -639,6 +798,8 @@ $('vr').addEventListener('click', async () => {
 
 /* ---------- drone-cockpit: video groot om je heen + dashboard uit het .SRT ---------- */
 let vlucht = null;   // { pt: [{t,x,y,h,v,vz,r}], minX, maxX, minY, maxY }
+let huidigeVideo = '';   // pad van de video in de cockpit
+let heli = null;     // helikoptergeluid (zie verderop); hier al gedeclareerd omdat hudLus direct start
 let cRenderer = null, cScene, cCamera, cScherm, cHud, cHudTex;   // VR-cockpit
 async function openVlucht(pad) {
   $('bladeren').style.display = 'none';
@@ -646,6 +807,7 @@ async function openVlucht(pad) {
   $('vluchtNaam').textContent = '🎬 ' + pad.split('/').pop();
   const v = $('vluchtVideo');
   v.src = serverAdres() + '/api/video?' + new URLSearchParams({ pad });
+  huidigeVideo = pad; eigenDrone = false;
   vlucht = null;
   $('hud').style.display = 'none';
   $('cockpit').scrollIntoView({ behavior: 'smooth' });
@@ -737,13 +899,107 @@ function tekenHUD() {
 }
 (function hudLus() {   // op de pc / buiten VR het dashboard bijwerken
   if (vlucht && $('cockpit').style.display !== 'none' && !(cRenderer && cRenderer.xr.isPresenting)) tekenHUD();
+  if (typeof werkHeliBij === 'function') werkHeliBij();
   requestAnimationFrame(hudLus);
 })();
 $('speelPauze').addEventListener('click', () => { const v = $('vluchtVideo'); v.paused ? v.play() : v.pause(); });
 $('sluitCockpit').addEventListener('click', () => {
   const v = $('vluchtVideo'); v.pause(); v.removeAttribute('src'); v.load();   // stopt ook het downloaden
-  $('cockpit').style.display = 'none'; vlucht = null;
+  $('cockpit').style.display = 'none'; vlucht = null; huidigeVideo = ''; eigenDrone = false;
+  if (eigenUrl) { URL.revokeObjectURL(eigenUrl); eigenUrl = null; }
+  if (heli) { heli.meng.gain.setTargetAtTime(0, heli.ctx.currentTime, 0.1); setTimeout(() => heli && heli.ctx.suspend(), 400); }
 });
+
+/* ---------- helikoptergeluid (alleen bij drone-vluchten, zelf gemaakt in de browser) ----------
+   Geen geluidsbestand nodig: ruis door een laagdoorlaatfilter, ritmisch aan/uit gezet door een
+   langzame trilling (het "wop-wop" van de rotorbladen), met een zachte lage dreun en een heel licht
+   turbinegeruis. De rotor draait iets sneller bij hogere snelheid en bij stijgen (uit het .SRT).
+   Drone-video's hebben zelf geen geluid. Het geluid klinkt bij elke drone-video: met .SRT, of zonder
+   .SRT als hij in de lijst met drone-vluchten staat (dan draait de rotor op een vast toerental).
+   Een video die je zelf kiest met "🚁 Eigen drone-video" krijgt het geluid ook.
+   Gewone video's (telefoon e.d.) krijgen dit geluid niet. */
+function heliInstelling() {
+  let aan = true, vol = 35;
+  try {
+    const a = localStorage.getItem('heliAan'), v = localStorage.getItem('heliVolume');
+    if (a !== null) aan = a === '1';
+    if (v !== null) vol = parseInt(v, 10);
+  } catch {}
+  return { aan, vol: isNaN(vol) ? 35 : vol };
+}
+(function zetHeliKnoppen() {
+  const { aan, vol } = heliInstelling();
+  $('heliAan').checked = aan; $('heliVolume').value = vol;
+  $('heliAan').addEventListener('change', () => { try { localStorage.setItem('heliAan', $('heliAan').checked ? '1' : '0'); } catch {} startHeli(); });
+  $('heliVolume').addEventListener('input', () => { try { localStorage.setItem('heliVolume', $('heliVolume').value); } catch {} });
+})();
+function maakHeli() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  const ctx = new AC();
+  // 2 s "bruine" ruis (dieper en zachter dan witte ruis), in een lus
+  const n = ctx.sampleRate * 2, buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+  let vorige = 0;
+  for (let i = 0; i < n; i++) { vorige = (vorige + 0.02 * (Math.random() * 2 - 1)) / 1.02; d[i] = vorige * 3.5; }
+  const ruis = ctx.createBufferSource(); ruis.buffer = buf; ruis.loop = true;
+
+  // bladslag: sinus -> vorm met korte pieken (0..1)
+  const lfo = ctx.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 5.5;
+  const vorm = ctx.createWaveShaper();
+  vorm.curve = Float32Array.from({ length: 512 }, (_, i) => Math.pow((i / 511), 3));
+
+  // rotor: laag gefilterde ruis, sterkte volgt de bladslag
+  const rotorFilter = ctx.createBiquadFilter(); rotorFilter.type = 'lowpass'; rotorFilter.frequency.value = 420; rotorFilter.Q.value = 0.8;
+  const rotor = ctx.createGain(); rotor.gain.value = 0.12;
+  const rotorDiepte = ctx.createGain(); rotorDiepte.gain.value = 0.9;
+  ruis.connect(rotorFilter).connect(rotor);
+  lfo.connect(vorm); vorm.connect(rotorDiepte).connect(rotor.gain);
+
+  // lage dreun die meepulseert
+  const dreun = ctx.createOscillator(); dreun.type = 'sine'; dreun.frequency.value = 52;
+  const dreunGain = ctx.createGain(); dreunGain.gain.value = 0;
+  const dreunDiepte = ctx.createGain(); dreunDiepte.gain.value = 0.35;
+  dreun.connect(dreunGain); vorm.connect(dreunDiepte).connect(dreunGain.gain);
+
+  // heel zacht turbinegeruis
+  const turbFilter = ctx.createBiquadFilter(); turbFilter.type = 'bandpass'; turbFilter.frequency.value = 1700; turbFilter.Q.value = 6;
+  const turb = ctx.createGain(); turb.gain.value = 0.05;
+  ruis.connect(turbFilter).connect(turb);
+
+  const meng = ctx.createGain(); meng.gain.value = 0;              // hoofdvolume (start stil)
+  const zacht = ctx.createBiquadFilter(); zacht.type = 'lowpass'; zacht.frequency.value = 2500;
+  rotor.connect(meng); dreunGain.connect(meng); turb.connect(meng);
+  meng.connect(zacht).connect(ctx.destination);
+
+  ruis.start(); lfo.start(); dreun.start();
+  return { ctx, meng, lfo, rotorFilter, dreun };
+}
+function startHeli() {                 // bij afspelen (na een klik mag de browser geluid maken)
+  if (!heli) heli = maakHeli();
+  if (heli && heli.ctx.state === 'suspended') heli.ctx.resume().catch(() => {});
+}
+function werkHeliBij() {               // elk beeldje: volume en rotortoerental volgen video en vlucht
+  if (!heli) return;
+  const v = $('vluchtVideo'), nu = heli.ctx.currentTime;
+  const zichtbaar = $('cockpit').style.display !== 'none';
+  const speelt = zichtbaar && !v.paused && !v.ended && v.readyState >= 2;
+  const isDrone = !!vlucht || eigenDrone || droneVideos.has(huidigeVideo);
+  const doel = ($('heliAan').checked && isDrone && speelt) ? parseInt($('heliVolume').value, 10) / 100 * 0.6 : 0;
+  heli.meng.gain.setTargetAtTime(doel, nu, 0.25);
+  if (vlucht) {
+    const s = vluchtOp(v.currentTime || 0);
+    const snel = Math.min(1, Math.max(0, s.v / 60));               // 0..60 km/u
+    const stijg = vlucht.metHoogte ? Math.min(1, Math.max(-0.5, s.vz / 4)) : 0;
+    heli.lfo.frequency.setTargetAtTime(5.2 + snel * 0.8 + stijg * 0.7, nu, 0.6);
+    heli.rotorFilter.frequency.setTargetAtTime(380 + snel * 160 + Math.max(0, stijg) * 140, nu, 0.6);
+    heli.dreun.frequency.setTargetAtTime(50 + snel * 4 + stijg * 5, nu, 0.6);
+  } else {                             // geen vluchtgegevens: rustig, vast toerental
+    heli.lfo.frequency.setTargetAtTime(5.6, nu, 0.6);
+    heli.rotorFilter.frequency.setTargetAtTime(430, nu, 0.6);
+    heli.dreun.frequency.setTargetAtTime(52, nu, 0.6);
+  }
+}
+$('vluchtVideo').addEventListener('play', startHeli);
 
 // VR: groot gebogen scherm (110°) om je heen, dashboard onder je blik zoals in een cockpit
 // Gebogen scherm met dezelfde verhouding als de video: 16:9 drone = 110° breed,
@@ -776,27 +1032,35 @@ function initCockpitVR() {
   cHudTex.colorSpace = THREE.SRGBColorSpace;
   cHud = new THREE.Mesh(new THREE.PlaneGeometry(0.72, 0.18), new THREE.MeshBasicMaterial({ map: cHudTex, transparent: true, opacity: 0.93 }));
   cScene.add(cScherm, cHud);
-  let vorigeStick = 0, vorigeKnop = false, hudAan = true;
+  let vorigeStick = 0, vorigeKnop = false, vorigeGeluidKnop = false, hudAan = true;
   cRenderer.setAnimationLoop(() => {
     cHud.visible = !!vlucht && hudAan;
     if (vlucht) { tekenHUD(); cHudTex.needsUpdate = true; }
     const sessie = cRenderer.xr.getSession();
     if (sessie) {                                       // duimstick: 10 s terug/vooruit
-      let st = 0, knop = false;
+      let st = 0, knop = false, geluidKnop = false;
       for (const bron of sessie.inputSources) {
         const gp = bron.gamepad; if (!gp) continue;
         const ax = gp.axes, x = ax.length > 2 ? ax[2] : ax[0];
         if (x > 0.8) st = 1; else if (x < -0.8) st = -1;
         if (gp.buttons[4] && gp.buttons[4].pressed) knop = true;   // A- of X-knop
+        if (gp.buttons[5] && gp.buttons[5].pressed) geluidKnop = true;   // B- of Y-knop
       }
       if (knop && !vorigeKnop) hudAan = !hudAan;                // dashboard aan/uit
       vorigeKnop = knop;
+      if (geluidKnop && !vorigeGeluidKnop) {                    // helikoptergeluid aan/uit
+        $('heliAan').checked = !$('heliAan').checked;
+        try { localStorage.setItem('heliAan', $('heliAan').checked ? '1' : '0'); } catch {}
+        startHeli();
+      }
+      vorigeGeluidKnop = geluidKnop;
       if (st && st !== vorigeStick) {
         const v = $('vluchtVideo');
         v.currentTime = Math.max(0, Math.min((v.duration || 0) - 0.5, v.currentTime + st * 10));
       }
       vorigeStick = st;
     }
+    werkHeliBij();
     cRenderer.render(cScene, cCamera);
   });
 }
